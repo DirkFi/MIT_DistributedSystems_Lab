@@ -1,48 +1,130 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io"
+	"log"
+	"net/rpc"
+	"os"
+	"time"
+)
 
-
-//
 // Map functions return a slice of KeyValue.
-//
 type KeyValue struct {
 	Key   string
 	Value string
 }
 
-//
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
-//
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
-//
 // main/mrworker.go calls this function.
-//
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	// Worker needs to respond to Coordinator to process Map or Reduce Task
+	// For coordinator, if it gets Complete, it should assign a new task to that worker?
+	// nTasks = nFiles
+	for {
+		taskArgs := TaskRequestArgs{}
+		taskResponse := TaskResponse{}
+
+		ok := call("Coordinator.AssignTask", &taskArgs, &taskResponse)
+
+		if !ok {
+			log.Println("Failure to contact the coordinator. Exit the worker.")
+			return
+		}
+
+		switch taskResponse.Type {
+		case Map:
+			doMapTask(mapf, taskResponse)
+		case Reduce:
+			doReduceTask(reducef, taskResponse)
+		case Wait:
+			time.Sleep(1 * time.Second)
+		case Complete:
+			return
+		default:
+			panic(fmt.Sprintf("Unexpected JobType %v", taskResponse.Type))
+		}
+	}
 
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 
 }
 
-//
+func doMapTask(mapf func(string, string) []KeyValue, taskResponse TaskResponse) {
+	// The input of mapf is (filename, content)
+	// After it is done need to change the state of tasks (use a function writtien in coordinator.go)
+
+	// Save (hash, []kvs)
+	intermediate := []KeyValue{}
+
+	taskArgs := TaskRequestArgs{}
+	// same structure form mrsequential.go
+	filename := taskResponse.FileName
+	nReduce := taskResponse.NumReduce
+
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("Cannot open %v in worker while doing map tasks", filename)
+	}
+	content, err := io.ReadAll(file)
+
+	if err != nil {
+		log.Fatalf("Cannot read %v in worker after opening files", filename)
+	}
+
+	file.Close()
+	kva := mapf(filename, string(content))
+	intermediate = append(intermediate, kva...)
+
+	hashedValues := make([][]KeyValue, nReduce)
+	for _, kv := range intermediate {
+		hash := ihash(kv.Key) % nReduce
+		hashedValues[hash] = append(hashedValues[hash], kv)
+	}
+	// Write into files
+	for rNum, kvs := range hashedValues {
+		fileName := fmt.Sprintf("mr-%d-%d", taskResponse.TaskID, rNum)
+		file, err := os.Create(fileName)
+		if err != nil {
+			log.Fatalf("Cannot create %v in worker after hashedValues are done", filename)
+		}
+		enc := json.NewEncoder(file)
+		for _, kv := range kvs {
+			err := enc.Encode(&kv)
+			if err != nil {
+				log.Printf("Cannot write %v into the %v", &kv, fileName)
+			}
+		}
+		file.Close()
+	}
+
+	// Call the function to mark TaskID as Completed
+	taskResponse.Type = Complete
+	call("Coordinator.MarkAsComplete", &taskArgs, &taskResponse)
+}
+
+func doReduceTask(reducef func(string, []string) string, taskResponse TaskResponse) {
+	// reducef(intermediate[i].Key, values)
+	// The input of reducef is (key, values)
+
+}
+
 // example function to show how to make an RPC call to the coordinator.
 //
 // the RPC argument and reply types are defined in rpc.go.
-//
 func CallExample() {
 
 	// declare an argument structure.
@@ -67,11 +149,9 @@ func CallExample() {
 	}
 }
 
-//
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
-//
 func call(rpcname string, args interface{}, reply interface{}) bool {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := coordinatorSock()
