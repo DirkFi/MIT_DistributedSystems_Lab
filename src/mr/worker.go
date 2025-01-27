@@ -119,7 +119,46 @@ func doMapTask(mapf func(string, string) []KeyValue, taskResponse TaskResponse) 
 func doReduceTask(reducef func(string, []string) string, taskResponse TaskResponse) {
 	// reducef(intermediate[i].Key, values)
 	// The input of reducef is (key, values)
+	intermediate := []KeyValue{}
+	filename := taskResponse.FileName
 
+	// Open the intermediate file
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("Cannot open intermediate file %v: %v", filename, err)
+	}
+	defer file.Close()
+
+	// Decode the key-value pairs from the file
+	dec := json.NewDecoder(file)
+	for {
+		var kv KeyValue
+		if err := dec.Decode(&kv); err != nil {
+			break // End of file
+		}
+		intermediate = append(intermediate, kv)
+	}
+
+	groups := make(map[string][]string)
+	for _, kv := range intermediate {
+		groups[kv.Key] = append(groups[kv.Key], kv.Value)
+	}
+
+	outputFile := fmt.Sprintf("mr-out-%d", taskResponse.TaskID)
+	ofile, err := os.Create(outputFile)
+	if err != nil {
+		log.Fatalf("Cannot create output file %v: %v", outputFile, err)
+	}
+	defer ofile.Close()
+
+	for key, values := range groups {
+		output := reducef(key, values)
+		fmt.Fprintf(ofile, "%v %v\n", key, output)
+	}
+
+	taskResponse.Type = Complete
+	taskArgs := TaskRequestArgs{}
+	call("Coordinator.MarkAsComplete", &taskArgs, &taskResponse)
 }
 
 // example function to show how to make an RPC call to the coordinator.

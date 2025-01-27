@@ -6,6 +6,10 @@ import "os"
 import "net/rpc"
 import "net/http"
 import "time"
+import "path/filepath"
+import "strconv"
+import "strings"
+import "fmt"
 
 // Each Task should have starttime, id, filename(to be reproduced), and its state
 type Task struct {
@@ -42,6 +46,48 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
+func GetMapFile(dir string, id int) (string, error) {
+	var foundFile string
+
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+
+		// Extract the filename without the directory
+		filename := filepath.Base(path)
+
+		// Check if the filename matches the expected format "mr-{}-{}"
+		if strings.HasPrefix(filename, "mr-") {
+			parts := strings.Split(filename, "-")
+			if len(parts) == 3 {
+				// Try to parse the last part as an integer
+				fileID, err := strconv.Atoi(parts[2])
+				if err == nil && fileID == id {
+					foundFile = path
+					return filepath.SkipDir // Stop walking the directory
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if foundFile == "" {
+		return "", fmt.Errorf("no file found with id %d", id)
+	}
+
+	return foundFile, nil
+}
 func (c *Coordinator) AssignTask(args *TaskRequestArgs, response *TaskResponse) error {
 	// Add lock
 	if c.phase == "Map" {
@@ -61,8 +107,14 @@ func (c *Coordinator) AssignTask(args *TaskRequestArgs, response *TaskResponse) 
 		for i := c.nMap; i < c.nMap+c.nReduce; i++ {
 			task := c.Tasks[i]
 			if task.StartTime.IsZero() || (time.Now().Sub(task.StartTime).Seconds() >= 10 && task.State != Completed) {
+				// Assign the filename by traversing all the files
+				filename, err := GetMapFile(".", task.ID)
+				if err != nil {
+					return err
+				}
 				task.State = Started
 				task.StartTime = time.Now()
+				response.FileName = filename
 				response.Type = Reduce
 				response.NumReduce = c.nReduce
 				response.TaskID = i
@@ -79,6 +131,8 @@ func (c *Coordinator) MarkAsComplete(response *TaskResponse) {
 	} else {
 		log.Fatalf("There is a contradict about task %v", c.Tasks[response.TaskID])
 	}
+	// TODO: Check if map process is Done
+	// if it's Done, mark c.phase to be reduce
 }
 
 // start a thread that listens for RPCs from worker.go
