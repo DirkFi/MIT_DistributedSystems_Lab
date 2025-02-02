@@ -46,9 +46,9 @@ func Worker(mapf func(string, string) []KeyValue,
 
 		switch taskResponse.Type {
 		case Map:
-			doMapTask(mapf, taskResponse)
+			doMapTask(mapf, &taskResponse)
 		case Reduce:
-			doReduceTask(reducef, taskResponse)
+			doReduceTask(reducef, &taskResponse)
 		case Wait:
 			time.Sleep(1 * time.Second)
 		case Complete:
@@ -63,7 +63,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 }
 
-func doMapTask(mapf func(string, string) []KeyValue, taskResponse TaskResponse) {
+func doMapTask(mapf func(string, string) []KeyValue, taskResponse *TaskResponse) {
 	// The input of mapf is (filename, content)
 	// After it is done need to change the state of tasks (use a function writtien in coordinator.go)
 
@@ -116,7 +116,7 @@ func doMapTask(mapf func(string, string) []KeyValue, taskResponse TaskResponse) 
 	call("Coordinator.MarkAsComplete", &taskArgs, &taskResponse)
 }
 
-func doReduceTask(reducef func(string, []string) string, taskResponse TaskResponse) {
+func doReduceTask(reducef func(string, []string) string, taskResponse *TaskResponse) {
 	// reducef(intermediate[i].Key, values)
 	// The input of reducef is (key, values)
 	intermediate := []KeyValue{}

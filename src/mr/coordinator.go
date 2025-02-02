@@ -1,15 +1,18 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
-import "time"
-import "path/filepath"
-import "strconv"
-import "strings"
-import "fmt"
+import (
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
 
 // Each Task should have starttime, id, filename(to be reproduced), and its state
 type Task struct {
@@ -34,6 +37,7 @@ type Coordinator struct {
 	phase   string
 	nMap    int
 	nReduce int
+	mu      sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -90,6 +94,8 @@ func GetMapFile(dir string, id int) (string, error) {
 }
 func (c *Coordinator) AssignTask(args *TaskRequestArgs, response *TaskResponse) error {
 	// Add lock
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.phase == "Map" {
 		for i := 0; i < c.nMap; i++ {
 			task := c.Tasks[i]
@@ -125,14 +131,24 @@ func (c *Coordinator) AssignTask(args *TaskRequestArgs, response *TaskResponse) 
 	return nil
 }
 
-func (c *Coordinator) MarkAsComplete(response *TaskResponse) {
+func (c *Coordinator) MarkAsComplete(args *TaskRequestArgs, response *TaskResponse) error {
+	// Add lock
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if response.Type == Complete {
 		c.Tasks[response.TaskID].State = Completed
 	} else {
 		log.Fatalf("There is a contradict about task %v", c.Tasks[response.TaskID])
 	}
-	// TODO: Check if map process is Done
-	// if it's Done, mark c.phase to be reduce
+	// If map process is Done
+	// Mark c.phase to be reduce
+	for i := 0; i < c.nMap; i++ {
+		if c.Tasks[i].State != Completed {
+			return nil
+		}
+	}
+	c.phase = "Reduce"
+	return nil
 }
 
 // start a thread that listens for RPCs from worker.go
