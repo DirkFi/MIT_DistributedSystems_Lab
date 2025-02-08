@@ -34,7 +34,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	// For coordinator, if it gets Complete, it should assign a new task to that worker?
 	// nTasks = nFiles
 	for {
-		taskArgs := TaskRequestArgs{}
+		taskArgs := TaskCompleteArgs{}
 		taskResponse := TaskResponse{}
 
 		ok := call("Coordinator.AssignTask", &taskArgs, &taskResponse)
@@ -50,7 +50,8 @@ func Worker(mapf func(string, string) []KeyValue,
 		case Reduce:
 			doReduceTask(reducef, &taskResponse)
 		case Wait:
-			time.Sleep(1 * time.Second)
+			fmt.Println("Waiting..")
+			time.Sleep(1 * time.Millisecond)
 		case Complete:
 			return
 		default:
@@ -70,13 +71,13 @@ func doMapTask(mapf func(string, string) []KeyValue, taskResponse *TaskResponse)
 	// Save (hash, []kvs)
 	intermediate := []KeyValue{}
 
-	taskArgs := TaskRequestArgs{}
 	// same structure form mrsequential.go
 	filename := taskResponse.FileName
 	nReduce := taskResponse.NumReduce
 
 	file, err := os.Open(filename)
 	if err != nil {
+		fmt.Println("response in doMapTask", taskResponse.FileName)
 		log.Fatalf("Cannot open %v in worker while doing map tasks", filename)
 	}
 	content, err := io.ReadAll(file)
@@ -112,8 +113,15 @@ func doMapTask(mapf func(string, string) []KeyValue, taskResponse *TaskResponse)
 	}
 
 	// Call the function to mark TaskID as Completed
+	completeArgs := TaskCompleteArgs{
+		TaskID: taskResponse.TaskID,
+		Type:   Complete,
+	}
 	taskResponse.Type = Complete
-	call("Coordinator.MarkAsComplete", &taskArgs, &taskResponse)
+	if !call("Coordinator.MarkAsComplete", &completeArgs, &taskResponse) {
+		log.Println("Failed to notify coordinator about task completion")
+	}
+	fmt.Println("Current file name(worker) is", taskResponse.FileName)
 }
 
 func doReduceTask(reducef func(string, []string) string, taskResponse *TaskResponse) {
@@ -144,7 +152,7 @@ func doReduceTask(reducef func(string, []string) string, taskResponse *TaskRespo
 		groups[kv.Key] = append(groups[kv.Key], kv.Value)
 	}
 
-	outputFile := fmt.Sprintf("mr-out-%d", taskResponse.TaskID)
+	outputFile := fmt.Sprintf("mr-out-%d", taskResponse.TaskID-taskResponse.NumMap)
 	ofile, err := os.Create(outputFile)
 	if err != nil {
 		log.Fatalf("Cannot create output file %v: %v", outputFile, err)
@@ -156,9 +164,14 @@ func doReduceTask(reducef func(string, []string) string, taskResponse *TaskRespo
 		fmt.Fprintf(ofile, "%v %v\n", key, output)
 	}
 
+	completeArgs := TaskCompleteArgs{
+		TaskID: taskResponse.TaskID,
+		Type:   Complete,
+	}
 	taskResponse.Type = Complete
-	taskArgs := TaskRequestArgs{}
-	call("Coordinator.MarkAsComplete", &taskArgs, &taskResponse)
+	if !call("Coordinator.MarkAsComplete", &completeArgs, &taskResponse) {
+		log.Println("Failed to notify coordinator about task completion")
+	}
 }
 
 // example function to show how to make an RPC call to the coordinator.

@@ -23,8 +23,9 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
-type TaskRequestArgs struct {
-	WorkerID int
+type TaskCompleteArgs struct {
+	TaskID int
+	Type   TaskType
 }
 
 type TaskType int
@@ -40,6 +41,7 @@ type TaskResponse struct {
 	Type      TaskType // Map, Reduce, Wait, Complete
 	FileName  string   // For map tasks
 	TaskID    int      // ID of the task
+	NumMap    int      // Number of map tasks
 	NumReduce int      // Number of reduce tasks
 }
 

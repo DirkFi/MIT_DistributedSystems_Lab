@@ -50,7 +50,8 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
-func GetMapFile(dir string, id int) (string, error) {
+func GetReduceFile(dir string, id int) (string, error) {
+	fmt.Println("Trying to find id:", id)
 	var foundFile string
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -92,7 +93,7 @@ func GetMapFile(dir string, id int) (string, error) {
 
 	return foundFile, nil
 }
-func (c *Coordinator) AssignTask(args *TaskRequestArgs, response *TaskResponse) error {
+func (c *Coordinator) AssignTask(args *TaskCompleteArgs, response *TaskResponse) error {
 	// Add lock
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -100,54 +101,64 @@ func (c *Coordinator) AssignTask(args *TaskRequestArgs, response *TaskResponse) 
 		for i := 0; i < c.nMap; i++ {
 			task := c.Tasks[i]
 			if task.StartTime.IsZero() || (time.Now().Sub(task.StartTime).Seconds() >= 10 && task.State != Completed) {
-				task.State = Started
-				task.StartTime = time.Now()
+				c.Tasks[i].State = Started
+				c.Tasks[i].StartTime = time.Now()
 				response.Type = Map
 				response.FileName = task.FileName
 				response.NumReduce = c.nReduce
 				response.TaskID = i
+
+				fmt.Println("Response in Coordinator: ", response)
+				return nil
 			}
 		}
-		return nil
 	} else if c.phase == "Reduce" {
 		for i := c.nMap; i < c.nMap+c.nReduce; i++ {
 			task := c.Tasks[i]
 			if task.StartTime.IsZero() || (time.Now().Sub(task.StartTime).Seconds() >= 10 && task.State != Completed) {
 				// Assign the filename by traversing all the files
-				filename, err := GetMapFile(".", task.ID)
+				filename, err := GetReduceFile(".", task.ID-c.nMap)
 				if err != nil {
 					return err
 				}
-				task.State = Started
-				task.StartTime = time.Now()
+				c.Tasks[i].State = Started
+				c.Tasks[i].StartTime = time.Now()
 				response.FileName = filename
 				response.Type = Reduce
+				response.NumMap = c.nMap
 				response.NumReduce = c.nReduce
 				response.TaskID = i
+				return nil
 			}
 		}
-		return nil
 	}
+	response.Type = Complete
 	return nil
 }
 
-func (c *Coordinator) MarkAsComplete(args *TaskRequestArgs, response *TaskResponse) error {
+func (c *Coordinator) MarkAsComplete(args *TaskCompleteArgs, response *struct{}) error {
 	// Add lock
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if response.Type == Complete {
-		c.Tasks[response.TaskID].State = Completed
+
+	if args.Type == Complete {
+		c.Tasks[args.TaskID].State = Completed
 	} else {
-		log.Fatalf("There is a contradict about task %v", c.Tasks[response.TaskID])
+		log.Fatalf("There is a contradict about task %v", c.Tasks[args.TaskID])
 	}
-	// If map process is Done
-	// Mark c.phase to be reduce
-	for i := 0; i < c.nMap; i++ {
-		if c.Tasks[i].State != Completed {
-			return nil
+
+	// Transition phase if needed:
+	if c.phase == "Map" {
+		for i := 0; i < c.nMap; i++ {
+			if c.Tasks[i].State != Completed {
+				return nil
+			}
 		}
+
+		fmt.Println("Coordinator: Work on reducing right now")
+		c.phase = "Reduce"
 	}
-	c.phase = "Reduce"
+
 	return nil
 }
 
