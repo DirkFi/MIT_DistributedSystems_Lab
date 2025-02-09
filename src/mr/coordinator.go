@@ -51,8 +51,8 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 }
 
 func GetReduceFile(dir string, id int) (string, error) {
+	var files []string
 	fmt.Println("Trying to find id:", id)
-	var foundFile string
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -65,34 +65,27 @@ func GetReduceFile(dir string, id int) (string, error) {
 		}
 
 		// Extract the filename without the directory
+		// Check if the filename matches the expected format "mr-*-reduceTaskID"
 		filename := filepath.Base(path)
-
-		// Check if the filename matches the expected format "mr-{}-{}"
-		if strings.HasPrefix(filename, "mr-") {
-			parts := strings.Split(filename, "-")
-			if len(parts) == 3 {
-				// Try to parse the last part as an integer
-				fileID, err := strconv.Atoi(parts[2])
-				if err == nil && fileID == id {
-					foundFile = path
-					return filepath.SkipDir // Stop walking the directory
-				}
+		parts := strings.Split(filename, "-")
+		if len(parts) == 3 {
+			reduceID, err := strconv.Atoi(parts[2])
+			if err == nil && reduceID == id {
+				files = append(files, path)
 			}
 		}
 
 		return nil
+
 	})
 
 	if err != nil {
 		return "", err
 	}
 
-	if foundFile == "" {
-		return "", fmt.Errorf("no file found with id %d", id)
-	}
-
-	return foundFile, nil
+	return strings.Join(files, ","), nil
 }
+
 func (c *Coordinator) AssignTask(args *TaskCompleteArgs, response *TaskResponse) error {
 	// Add lock
 	c.mu.Lock()

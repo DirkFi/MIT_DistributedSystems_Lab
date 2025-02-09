@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -128,25 +129,29 @@ func doReduceTask(reducef func(string, []string) string, taskResponse *TaskRespo
 	// reducef(intermediate[i].Key, values)
 	// The input of reducef is (key, values)
 	intermediate := []KeyValue{}
-	filename := taskResponse.FileName
+	filenames := taskResponse.FileName
 
-	// Open the intermediate file
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatalf("Cannot open intermediate file %v: %v", filename, err)
-	}
-	defer file.Close()
-
-	// Decode the key-value pairs from the file
-	dec := json.NewDecoder(file)
-	for {
-		var kv KeyValue
-		if err := dec.Decode(&kv); err != nil {
-			break // End of file
+	for _, filename := range strings.Split(filenames, ",") {
+		// Open the intermediate file
+		fmt.Println("Processing: ", filename)
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("Cannot open intermediate file %v: %v", filename, err)
 		}
-		intermediate = append(intermediate, kv)
-	}
 
+		// Decode the key-value pairs from the file
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break // End of file
+			}
+			intermediate = append(intermediate, kv)
+		}
+
+		file.Close()
+	}
+	// sort.Sort(ByKey(intermediate))
 	groups := make(map[string][]string)
 	for _, kv := range intermediate {
 		groups[kv.Key] = append(groups[kv.Key], kv.Value)
@@ -163,7 +168,6 @@ func doReduceTask(reducef func(string, []string) string, taskResponse *TaskRespo
 		output := reducef(key, values)
 		fmt.Fprintf(ofile, "%v %v\n", key, output)
 	}
-
 	completeArgs := TaskCompleteArgs{
 		TaskID: taskResponse.TaskID,
 		Type:   Complete,
