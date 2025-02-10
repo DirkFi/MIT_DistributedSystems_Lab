@@ -51,7 +51,6 @@ func Worker(mapf func(string, string) []KeyValue,
 		case Reduce:
 			doReduceTask(reducef, &taskResponse)
 		case Wait:
-			fmt.Println("Waiting..")
 			time.Sleep(1 * time.Millisecond)
 		case Complete:
 			return
@@ -122,7 +121,6 @@ func doMapTask(mapf func(string, string) []KeyValue, taskResponse *TaskResponse)
 	if !call("Coordinator.MarkAsComplete", &completeArgs, &taskResponse) {
 		log.Println("Failed to notify coordinator about task completion")
 	}
-	fmt.Println("Current file name(worker) is", taskResponse.FileName)
 }
 
 func doReduceTask(reducef func(string, []string) string, taskResponse *TaskResponse) {
@@ -133,7 +131,6 @@ func doReduceTask(reducef func(string, []string) string, taskResponse *TaskRespo
 
 	for _, filename := range strings.Split(filenames, ",") {
 		// Open the intermediate file
-		fmt.Println("Processing: ", filename)
 		file, err := os.Open(filename)
 		if err != nil {
 			log.Fatalf("Cannot open intermediate file %v: %v", filename, err)

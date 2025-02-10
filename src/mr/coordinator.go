@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -52,7 +51,6 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 
 func GetReduceFile(dir string, id int) (string, error) {
 	var files []string
-	fmt.Println("Trying to find id:", id)
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -90,42 +88,53 @@ func (c *Coordinator) AssignTask(args *TaskCompleteArgs, response *TaskResponse)
 	// Add lock
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	idleExists := false
 	if c.phase == "Map" {
 		for i := 0; i < c.nMap; i++ {
 			task := c.Tasks[i]
-			if task.StartTime.IsZero() || (time.Now().Sub(task.StartTime).Seconds() >= 10 && task.State != Completed) {
-				c.Tasks[i].State = Started
-				c.Tasks[i].StartTime = time.Now()
-				response.Type = Map
-				response.FileName = task.FileName
-				response.NumReduce = c.nReduce
-				response.TaskID = i
+			if task.State != Completed {
+				idleExists = true
+				if task.StartTime.IsZero() || (time.Now().Sub(task.StartTime).Seconds() >= 10) {
+					idleExists = true
+					c.Tasks[i].State = Started
+					c.Tasks[i].StartTime = time.Now()
+					response.Type = Map
+					response.FileName = task.FileName
+					response.NumReduce = c.nReduce
+					response.TaskID = i
 
-				fmt.Println("Response in Coordinator: ", response)
-				return nil
+					return nil
+				}
 			}
 		}
 	} else if c.phase == "Reduce" {
 		for i := c.nMap; i < c.nMap+c.nReduce; i++ {
 			task := c.Tasks[i]
-			if task.StartTime.IsZero() || (time.Now().Sub(task.StartTime).Seconds() >= 10 && task.State != Completed) {
-				// Assign the filename by traversing all the files
-				filename, err := GetReduceFile(".", task.ID-c.nMap)
-				if err != nil {
-					return err
+			if task.State != Completed {
+				idleExists = true
+				if task.StartTime.IsZero() || (time.Now().Sub(task.StartTime).Seconds() >= 10 && task.State != Completed) {
+					// Assign the filename by traversing all the files
+					filename, err := GetReduceFile(".", task.ID-c.nMap)
+					if err != nil {
+						return err
+					}
+					c.Tasks[i].State = Started
+					c.Tasks[i].StartTime = time.Now()
+					response.FileName = filename
+					response.Type = Reduce
+					response.NumMap = c.nMap
+					response.NumReduce = c.nReduce
+					response.TaskID = i
+					return nil
 				}
-				c.Tasks[i].State = Started
-				c.Tasks[i].StartTime = time.Now()
-				response.FileName = filename
-				response.Type = Reduce
-				response.NumMap = c.nMap
-				response.NumReduce = c.nReduce
-				response.TaskID = i
-				return nil
 			}
 		}
 	}
-	response.Type = Complete
+	if idleExists {
+		response.Type = Wait
+	} else {
+		response.Type = Complete
+	}
 	return nil
 }
 
@@ -148,7 +157,6 @@ func (c *Coordinator) MarkAsComplete(args *TaskCompleteArgs, response *struct{})
 			}
 		}
 
-		fmt.Println("Coordinator: Work on reducing right now")
 		c.phase = "Reduce"
 	}
 
